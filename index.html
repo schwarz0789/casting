@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Castingsheet</title>
+<style>
+  :root { --bg: #1f1f22; --karte: #2a2a2e; --text: #f2f2f3; --leise: #a9a9b0; --akzent: #f2f2f3; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  .box { max-width: 520px; margin: 18vh auto 0; padding: 24px max(16px, env(safe-area-inset-left, 0px)); }
+  .karte { background: var(--karte); border-radius: 10px; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 10px; }
+  p { color: var(--leise); line-height: 1.5; margin: 0 0 8px; }
+  .lade { display: flex; align-items: center; gap: 12px; color: var(--leise); }
+  .kreis { width: 18px; height: 18px; border: 2px solid #55555c; border-top-color: var(--akzent); border-radius: 50%; animation: dreh 0.9s linear infinite; }
+  @keyframes dreh { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .kreis { animation: none; } }
+  button { margin-top: 10px; font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid #55555c; background: transparent; color: var(--text); cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="box"><div class="karte" id="karte"><div class="lade"><div class="kreis" aria-hidden="true"></div><span id="ladeText">Wird geladen …</span></div></div></div>
+<script>
+(function () {
+  // Schnittstelle der Google-Tabelle (Apps Script Web-App, Bereitstellung der Vorlage)
+  var API = 'https://script.google.com/macros/s/AKfycbxvxE2QWOBvMd7HZ_ktstQY3QzUtz_fej1ndFKqdqWbQS8onTRB4KiG_u15yOkhbkQ5/exec';
+
+  var q = {};
+  new URLSearchParams(location.search).forEach(function (v, k) { q[k] = v; });
+  var en = q.lang === 'en' || q.s === 'r';
+  document.documentElement.lang = en ? 'en' : 'de';
+  document.getElementById('ladeText').textContent = en ? 'Loading …' : 'Wird geladen …';
+
+  // Ersetzt google.script.run: gleiche Aufrufe, aber per fetch ohne Google-Login (credentials: omit)
+  function polyfill(API) {
+    var WIEDERHOLBAR = { seite: 1, regieLaden: 1, regieFotos: 1, videoStatus: 1 };
+    function warte(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    function einmal(fn, args) {
+      return fetch(API, { method: 'POST', body: JSON.stringify({ fn: fn, args: args }), headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                          credentials: 'omit', redirect: 'follow', cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw Object.assign(new Error('Server antwortet nicht (' + r.status + ').'), { netz: true }); return r.json(); },
+              function () { throw Object.assign(new Error(document.documentElement.lang === 'en' ? 'Connection interrupted – please try again.' : 'Verbindung unterbrochen – bitte erneut versuchen.'), { netz: true }); })
+        .then(function (j) { if (!j || !j.ok) throw new Error((j && j.fehler) || 'Unbekannter Fehler.'); return j.wert; });
+    }
+    function rufe(fn, args) {
+      var versuche = WIEDERHOLBAR[fn] ? 3 : 1;
+      function versuch(n) { return einmal(fn, args).catch(function (e) { if (e.netz && n + 1 < versuche) return warte(1200 * (n + 1)).then(function () { return versuch(n + 1); }); throw e; }); }
+      return versuch(0);
+    }
+    function lauf(ok, fehler) {
+      return new Proxy({}, { get: function (_, name) {
+        if (name === 'withSuccessHandler') return function (h) { return lauf(h, fehler); };
+        if (name === 'withFailureHandler') return function (h) { return lauf(ok, h); };
+        if (name === 'withUserObject') return function () { return lauf(ok, fehler); };
+        return function () { var args = Array.prototype.slice.call(arguments);
+          rufe(String(name), args).then(function (w) { if (ok) ok(w); }, function (e) { if (fehler) fehler(e); }); };
+      } });
+    }
+    window.google = window.google || {};
+    window.google.script = { run: lauf(null, null), _rufe: rufe };
+  }
+  polyfill(API);
+
+  function zeigeFehler(text) {
+    var k = document.getElementById('karte');
+    k.innerHTML = '';
+    var h = document.createElement('h1'); h.textContent = 'Castingsheet';
+    var p = document.createElement('p'); p.textContent = text;
+    var p2 = document.createElement('p'); p2.textContent = en ? 'Please contact your agency or the production.' : 'Bitte wende dich an deine Agentur oder die Produktion.';
+    var b = document.createElement('button'); b.type = 'button'; b.textContent = en ? 'Try again' : 'Erneut versuchen'; b.onclick = function () { location.reload(); };
+    k.appendChild(h); k.appendChild(p); k.appendChild(p2); k.appendChild(b);
+  }
+
+  if (!q.p || !q.t) { zeigeFehler(en ? 'This link is incomplete.' : 'Dieser Link ist unvollständig.'); return; }
+
+  window.google.script._rufe('seite', [q]).then(function (s) {
+    var html = String(s && s.html || '');
+    if (!/<head>/i.test(html)) throw new Error(en ? 'The page could not be loaded.' : 'Die Seite konnte nicht geladen werden.');
+    var kopf = '<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex, nofollow">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1"><title>' +
+      String(s.titel).replace(/[<&]/g, function (c) { return c === '<' ? '&lt;' : '&amp;'; }) + '</title>' +
+      '<script>(' + polyfill.toString() + ')(' + JSON.stringify(API) + ');<\/script>';
+    html = html.replace(/<head>/i, function () { return '<head>' + kopf; });
+    document.open(); document.write(html); document.close();
+  }).catch(function (e) { zeigeFehler(String((e && e.message) || e)); });
+})();
+</script>
+</body>
+</html>
